@@ -17,27 +17,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(tool.meta["ui"]["resourceUri"], server.WIDGET_URI)
         self.assertTrue(tool.annotations.readOnlyHint)
         schema = tool.inputSchema
-        self.assertEqual(schema["properties"]["mode"]["enum"], ["analysis", "companion"])
+        self.assertEqual(schema["properties"]["mode"]["enum"], ["analysis", "thinking"])
         self.assertEqual(schema["properties"]["length"]["enum"], ["brief", "normal", "expanded"])
-        self.assertEqual(schema["properties"]["appearance"]["enum"], ["paper", "microglow"])
+        self.assertNotIn("appearance", schema["properties"])
 
     def test_tool_returns_public_widget_metadata(self):
         response = server.render_visible_aside(
-            mode="companion",
-            thinking="先停一下，想把这句话接得自然一点。",
+            mode="thinking",
+            thinking="嗯……\n先停一下。\n换个方向看看。",
             length="brief",
-            appearance="paper",
         )
         self.assertFalse(response.isError)
         self.assertEqual(response.meta["length"], "brief")
-        self.assertEqual(response.meta["appearance"], "paper")
 
     def test_chinese_prompt_edition_is_available(self):
         self.assertEqual(server.normalize_prompt_language("zh_CN"), "zh-CN")
-        self.assertIn("用户可见的即时旁白", server.THINKING_DESCRIPTIONS["zh-CN"])
-        self.assertIn("不是真实隐藏思维链", server.THINKING_DESCRIPTIONS["zh-CN"])
+        self.assertIn("用户可见的即时思考", server.THINKING_DESCRIPTIONS["zh-CN"])
+        self.assertIn("3–8 个短片段", server.THINKING_DESCRIPTIONS["zh-CN"])
         self.assertIn("绝不写入密码", server.THINKING_DESCRIPTIONS["zh-CN"])
-        self.assertIn("默认使用 paper", server.SKIN_DESCRIPTIONS["zh-CN"])
+        self.assertIn("3–8 个短片段", server.THINKING_DESCRIPTIONS["zh-CN"])
 
     def test_unknown_prompt_language_fails_fast(self):
         with self.assertRaisesRegex(ValueError, "choose en, zh-CN"):
@@ -56,7 +54,6 @@ class ProtocolTests(unittest.TestCase):
                         mode="analysis",
                         thinking="fault injection",
                         length="brief",
-                        appearance="paper",
                     )
                 self.assertFalse(response.isError)
                 self.assertEqual(stderr.getvalue().count("[warn] capture failed"), 1)
@@ -65,12 +62,13 @@ class ProtocolTests(unittest.TestCase):
 
     def test_widget_is_collapsible_and_cache_versioned(self):
         html = server.visible_aside_widget()
-        self.assertIn("想了想", html)
+        self.assertIn("thinking-block", html)
         self.assertIn('aria-expanded="true"', html)
         self.assertIn("setCollapsed", html)
-        self.assertIn("data-skin", html)
-        self.assertIn("const style = resultMeta.mode", html)
-        self.assertIn("v1.html", server.WIDGET_URI)
+        self.assertIn("[thinking]", html)
+        self.assertIn("轻度 · 分析", html)
+        self.assertIn("const mode = resultMeta.mode", html)
+        self.assertIn("v2.html", server.WIDGET_URI)
         self.assertIn("notifyIntrinsicHeight", html)
 
 
