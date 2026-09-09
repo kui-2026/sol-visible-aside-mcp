@@ -665,6 +665,12 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/openapi.json", "/openapi.yaml", "/.well-known/openapi.json"):
             self._json(200, openapi(self._base()))
             return
+        # OAuth discovery is optional for this no-auth MCP. Return a finite 404
+        # instead of opening an SSE stream: some tunnel diagnostics probe these
+        # well-known endpoints before testing the actual MCP transport.
+        if path.startswith("/.well-known/"):
+            self._json(404, {"error": "not found"})
+            return
         # Some MCP clients open an SSE connection for server-initiated messages.
         self.send_response(200)
         self._cors()
