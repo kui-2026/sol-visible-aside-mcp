@@ -14,9 +14,10 @@
 
 ## 本机运行
 
-Python 3.9+，无第三方依赖：
+Python 3.10+，使用标准 MCP Python SDK：
 
 ```bash
+python3 -m pip install -r requirements.txt
 THINKING_PROMPT_LANGUAGE=zh-CN CAPTURE_ENABLED=0 python3 server.py
 ```
 
@@ -40,6 +41,7 @@ ChatGPT 是否呈现自定义卡片取决于当前入口是否支持 MCP Apps UI
 ## 开发与测试
 
 ```bash
+python3 -m pip install -r requirements.txt
 python3 -m unittest discover -v
 python3 -m py_compile server.py
 ```
