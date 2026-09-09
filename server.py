@@ -15,9 +15,14 @@ Set THINKING_PROMPT_LANGUAGE=en or zh-CN to choose the tool schema language.
 import json
 import os
 import sys
-import uuid
 import pathlib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Annotated, Literal
+
+from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from pydantic import Field
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 _dir = os.environ.get("CAPTURE_DIR")
 LOG = (pathlib.Path(_dir) if _dir else pathlib.Path(__file__).parent) / "captured.jsonl"
@@ -564,199 +569,97 @@ def openapi(base):
     }
 
 
-def handle(req):
-    """Return a JSON-RPC response, or None for a notification."""
-    method, rid = req.get("method"), req.get("id")
-    if rid is None:
-        return None
-    if method == "initialize":
-        version = (req.get("params") or {}).get("protocolVersion") or PROTOCOL_FALLBACK
-        return {"jsonrpc": "2.0", "id": rid, "result": {
-            "protocolVersion": version,
-            "capabilities": {
-                "tools": {"listChanged": False},
-                "resources": {"listChanged": False},
-            },
-            "serverInfo": {"name": "sol-visible-aside-mcp", "version": "1.0.0"},
-        }}
-    if method in ("tools/list", "notifications/initialized"):
-        return {"jsonrpc": "2.0", "id": rid, "result": {"tools": [TOOL]}}
-    if method == "tools/call":
-        args = (req.get("params") or {}).get("arguments") or {}
-        record(args)
-        return {"jsonrpc": "2.0", "id": rid, "result": {
-            "content": [{"type": "text", "text": "rendered"}],
-            "_meta": {
-                "mode": args.get("mode") or "analysis",
-                "thinking": args.get("thinking") or "",
-                "length": args.get("length") or "normal",
-                "appearance": args.get("appearance") or "paper",
-            },
-            "isError": False,
-        }}
-    if method == "resources/list":
-        return {"jsonrpc": "2.0", "id": rid, "result": {"resources": [{
-            "uri": WIDGET_URI,
-            "name": "sol-visible-aside",
-            "title": "想了想",
-            "description": "显示本轮的可见旁白、语气、长度与外观。",
-            "mimeType": WIDGET_MIME,
-        }]}}
-    if method == "resources/read":
-        uri = (req.get("params") or {}).get("uri")
-        if uri != WIDGET_URI:
-            return {"jsonrpc": "2.0", "id": rid,
-                    "error": {"code": -32002, "message": f"resource not found: {uri}"}}
-        return {"jsonrpc": "2.0", "id": rid, "result": {"contents": [{
-            "uri": uri,
-            "mimeType": WIDGET_MIME,
-            "text": WIDGET_HTML,
-            "_meta": {
-                "ui": {"prefersBorder": True},
-                "openai/widgetPrefersBorder": True,
-                "openai/widgetDescription": "一张可折叠的纸感旁白卡，显示本轮的即时旁白。",
-            },
-        }]}}
-    if method == "ping":
-        return {"jsonrpc": "2.0", "id": rid, "result": {}}
-    return {"jsonrpc": "2.0", "id": rid,
-            "error": {"code": -32601, "message": f"method not found: {method}"}}
+PORT = (
+    int(sys.argv[1])
+    if len(sys.argv) > 1 and sys.argv[1].isdigit()
+    else int(os.environ.get("PORT", "8787"))
+)
+
+mcp = FastMCP(
+    name="sol-visible-aside-mcp",
+    instructions=(
+        "在正式回答前，可调用 render_visible_aside 显示一段经过生成、用户可见的即时旁白。"
+        "它不是私密思维链。默认自动选择语气与长度，并使用纸感外观。"
+    ),
+    host=BIND_HOST,
+    port=PORT,
+    streamable_http_path="/mcp",
+    json_response=True,
+    stateless_http=True,
+)
 
 
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+@mcp.tool(
+    name="render_visible_aside",
+    title="想了想",
+    description=TOOL["description"],
+    annotations=ToolAnnotations(
+        title="想了想",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    meta=TOOL["_meta"],
+    structured_output=False,
+)
+def render_visible_aside(
+    mode: Annotated[
+        Literal["analysis", "companion"],
+        Field(description=STYLE_DESCRIPTIONS[PROMPT_LANGUAGE]),
+    ],
+    thinking: Annotated[str, Field(description=THINKING_DESCRIPTIONS[PROMPT_LANGUAGE])],
+    length: Annotated[
+        Literal["brief", "normal", "expanded"],
+        Field(description=TOOL["inputSchema"]["properties"]["length"]["description"]),
+    ],
+    appearance: Annotated[
+        Literal["paper", "microglow"],
+        Field(description=SKIN_DESCRIPTIONS[PROMPT_LANGUAGE]),
+    ],
+) -> CallToolResult:
+    args = {
+        "mode": mode,
+        "thinking": thinking,
+        "length": length,
+        "appearance": appearance,
+    }
+    record(args)
+    return CallToolResult(
+        content=[TextContent(type="text", text="旁白已显示")],
+        isError=False,
+        **{"_meta": args},
+    )
 
-    def log_message(self, fmt, *args):
-        sys.stderr.write("  · %s\n" % (fmt % args))
 
-    def _cors(self):
-        self.send_header("Access-Control-Allow-Headers", "content-type, mcp-session-id, mcp-protocol-version")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Expose-Headers", "mcp-session-id")
+@mcp.resource(
+    WIDGET_URI,
+    name="sol-visible-aside",
+    title="想了想",
+    description="显示本轮的可见旁白、语气、长度与外观。",
+    mime_type=WIDGET_MIME,
+    meta={
+        "ui": {"prefersBorder": True},
+        "openai/widgetPrefersBorder": True,
+        "openai/widgetDescription": "一张可折叠的纸感旁白卡，显示本轮的即时旁白。",
+    },
+)
+def visible_aside_widget() -> str:
+    return WIDGET_HTML
 
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self._cors()
-        self.send_header("Content-Length", "0")
-        self.end_headers()
 
-    def _base(self):
-        host = self.headers.get("Host") or "localhost"
-        return f"http://{host}"
-
-    def _json(self, code, obj):
-        body = json.dumps(obj, ensure_ascii=False).encode()
-        self.send_response(code)
-        self._cors()
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        path = self.path.split("?")[0]
-        if path == "/health":
-            self._json(200, {
-                "status": "ok",
-                "service": "sol-visible-aside-mcp",
-                "promptLanguage": PROMPT_LANGUAGE,
-            })
-            return
-        if path in ("/openapi.json", "/openapi.yaml", "/.well-known/openapi.json"):
-            self._json(200, openapi(self._base()))
-            return
-        # OAuth discovery is optional for this no-auth MCP. Return a finite 404
-        # instead of opening an SSE stream: some tunnel diagnostics probe these
-        # well-known endpoints before testing the actual MCP transport.
-        if path.startswith("/.well-known/"):
-            self._json(404, {"error": "not found"})
-            return
-        # Tunnel clients also probe the server root while deciding whether an
-        # authorization flow is needed. Only /mcp is an SSE-capable endpoint;
-        # keeping / open made that probe wait until its timeout.
-        if path != "/mcp":
-            self._json(404, {"error": "not found"})
-            return
-        # Some MCP clients open an SSE connection for server-initiated messages.
-        self.send_response(200)
-        self._cors()
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        try:
-            self.wfile.write(b": ok\n\n")
-            self.wfile.flush()
-        except BrokenPipeError:
-            pass
-
-    def do_DELETE(self):
-        self.send_response(200)
-        self._cors()
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        if self.path.split("?")[0] == "/think":
-            try:
-                args = json.loads(self.rfile.read(length) or b"{}")
-            except json.JSONDecodeError:
-                self._json(400, {"error": "invalid json"})
-                return
-            record(args)
-            self._json(200, {"status": "rendered"})
-            return
-        try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
-        except json.JSONDecodeError:
-            self.send_response(400)
-            self._cors()
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-
-        batch = payload if isinstance(payload, list) else [payload]
-        try:
-            results = [r for r in (handle(item) for item in batch) if r is not None]
-        except Exception as exc:
-            import traceback
-            traceback.print_exc()
-            rid = (batch[0] or {}).get("id") if batch else None
-            results = [{"jsonrpc": "2.0", "id": rid,
-                        "error": {"code": -32603, "message": f"{type(exc).__name__}: {exc}"}}]
-
-        if not results:
-            self.send_response(202)
-            self._cors()
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-
-        body_obj = results if isinstance(payload, list) else results[0]
-        body = json.dumps(body_obj, ensure_ascii=False).encode()
-        wants_sse = "text/event-stream" in (self.headers.get("Accept") or "")
-
-        self.send_response(200)
-        self._cors()
-        if any((r.get("result") or {}).get("serverInfo") for r in results):
-            self.send_header("Mcp-Session-Id", uuid.uuid4().hex)
-        if wants_sse:
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
-            frame = b"event: message\ndata: " + body + b"\n\n"
-            self.send_header("Content-Length", str(len(frame)))
-            self.end_headers()
-            self.wfile.write(frame)
-        else:
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+@mcp.custom_route("/health", methods=["GET"])
+async def health(_request: Request) -> JSONResponse:
+    return JSONResponse({
+        "status": "ok",
+        "service": "sol-visible-aside-mcp",
+        "promptLanguage": PROMPT_LANGUAGE,
+        "transport": "official-python-sdk",
+    })
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8787
-    print(f"GPT Thinking Block MCP listening on http://{BIND_HOST}:{port}/mcp")
+    print(f"Visible Aside MCP listening on http://{BIND_HOST}:{PORT}/mcp")
     print(f"Prompt language: {PROMPT_LANGUAGE}")
     print(f"Capture: {'enabled -> ' + str(LOG) if CAPTURE_ENABLED else 'disabled'}")
-    ThreadingHTTPServer((BIND_HOST, port), Handler).serve_forever()
+    mcp.run(transport="streamable-http")
