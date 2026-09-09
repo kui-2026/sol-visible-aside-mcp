@@ -1,11 +1,13 @@
 # Azure Windows deployment notes
 
-The application has no package dependencies. On the VPS, run it with Python 3.9+ from the repository directory and keep it bound to loopback only:
+The application uses the standard MCP Python SDK. On the VPS, install the pinned dependency and keep the service bound to loopback only:
 
 ```powershell
+$py="$env:LocalAppData\Programs\Python\Python313\python.exe"
+& $py -m pip install -r .\requirements.txt
 $env:THINKING_PROMPT_LANGUAGE="zh-CN"
 $env:CAPTURE_ENABLED="0"
-py -3 .\server.py 8787
+& $py .\server.py 8787
 ```
 
 Confirm locally:
