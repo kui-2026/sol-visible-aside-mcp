@@ -671,6 +671,12 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/.well-known/"):
             self._json(404, {"error": "not found"})
             return
+        # Tunnel clients also probe the server root while deciding whether an
+        # authorization flow is needed. Only /mcp is an SSE-capable endpoint;
+        # keeping / open made that probe wait until its timeout.
+        if path != "/mcp":
+            self._json(404, {"error": "not found"})
+            return
         # Some MCP clients open an SSE connection for server-initiated messages.
         self.send_response(200)
         self._cors()
