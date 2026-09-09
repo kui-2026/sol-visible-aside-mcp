@@ -1,0 +1,9 @@
+.git
+.gitignore
+__pycache__
+*.py[cod]
+.DS_Store
+.env
+captured
+screenshots
+tests
