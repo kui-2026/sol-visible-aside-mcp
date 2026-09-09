@@ -32,7 +32,7 @@ CAPTURE_ENABLED = os.environ.get("CAPTURE_ENABLED", "0").lower() in {"1", "true"
 BIND_HOST = os.environ.get("MCP_BIND", "127.0.0.1")
 
 PROTOCOL_FALLBACK = "2025-06-18"
-WIDGET_URI = "ui://widget/sol-visible-aside-v1.html"
+WIDGET_URI = "ui://widget/sol-visible-aside-v2.html"
 WIDGET_MIME = "text/html;profile=mcp-app"
 
 
@@ -54,7 +54,7 @@ def normalize_prompt_language(value):
 
 
 PROMPT_LANGUAGE = normalize_prompt_language(os.environ.get("THINKING_PROMPT_LANGUAGE", "zh-CN"))
-WIDGET_HTML = r"""<!doctype html>
+LEGACY_WIDGET_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -416,48 +416,227 @@ WIDGET_HTML = r"""<!doctype html>
 </body>
 </html>"""
 
+WIDGET_HTML = r"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f8;
+      --bg-hover: #f2f2f3;
+      --border: #e3e3e5;
+      --rail: #c7c7ca;
+      --text: #202123;
+      --muted: #6f7074;
+      --tag: #56575b;
+    }
+    :root[data-theme="dark"] {
+      --bg: #2f3033;
+      --bg-hover: #35363a;
+      --border: #44454a;
+      --rail: #67686e;
+      --text: #ececef;
+      --muted: #adaeb4;
+      --tag: #c8c9ce;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #2f3033;
+        --bg-hover: #35363a;
+        --border: #44454a;
+        --rail: #67686e;
+        --text: #ececef;
+        --muted: #adaeb4;
+        --tag: #c8c9ce;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 2px;
+      background: transparent;
+      color: var(--text);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .thinking-block {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--rail);
+      border-radius: 9px;
+      background: var(--bg);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 11px 14px 10px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .header:hover { background: var(--bg-hover); }
+    .header:focus-visible { outline: 2px solid var(--rail); outline-offset: -2px; }
+    .tag {
+      color: var(--tag);
+      font: 600 11px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: .01em;
+    }
+    .meta { color: var(--muted); font-weight: 500; }
+    .caret {
+      width: 7px;
+      height: 7px;
+      margin-left: 1px;
+      border-right: 1.5px solid var(--muted);
+      border-bottom: 1.5px solid var(--muted);
+      transform: rotate(45deg) translateY(-2px);
+    }
+    .thinking-block[data-collapsed="true"] .caret {
+      transform: rotate(-45deg) translate(-1px, -1px);
+    }
+    .thinking-block[data-collapsed="true"] .content { display: none; }
+    .content {
+      margin: 0 14px 13px;
+      padding: 10px 0 0;
+      border-top: 1px solid var(--border);
+    }
+    .content[data-scrollable="true"] {
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+    .thinking {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: var(--text);
+      font: 14px/1.72 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .caret { transition: transform 130ms ease; }
+    }
+  </style>
+</head>
+<body>
+  <section class="thinking-block" id="card" data-collapsed="false" aria-label="Thinking">
+    <button class="header" id="toggle" type="button" aria-expanded="true"
+            aria-controls="thinking-content" title="收起思考">
+      <span class="tag">[thinking]</span>
+      <span class="tag meta" id="meta">[轻度 · 分析]</span>
+      <span class="caret" aria-hidden="true"></span>
+    </button>
+    <div class="content" id="thinking-content">
+      <pre class="thinking" id="thinking"></pre>
+    </div>
+  </section>
+  <script>
+    const card = document.getElementById("card");
+    const toggle = document.getElementById("toggle");
+    const content = document.getElementById("thinking-content");
+    let heightFrame = 0;
+    let lastMeasuredHeight = -1;
+
+    function requestIntrinsicHeight(force = false) {
+      const host = window.openai || {};
+      if (typeof host.notifyIntrinsicHeight !== "function") return;
+      cancelAnimationFrame(heightFrame);
+      heightFrame = requestAnimationFrame(() => {
+        const measuredHeight = Math.ceil(document.documentElement.scrollHeight);
+        if (!force && measuredHeight === lastMeasuredHeight) return;
+        lastMeasuredHeight = measuredHeight;
+        try { host.notifyIntrinsicHeight(); } catch (_) {}
+      });
+    }
+
+    function applyHostHeightLimit(api) {
+      const maxHeight = Number(api.maxHeight);
+      if (!Number.isFinite(maxHeight) || maxHeight <= 0) {
+        content.style.maxHeight = "";
+        delete content.dataset.scrollable;
+        return;
+      }
+      content.style.maxHeight = Math.max(170, Math.floor(maxHeight - 68)) + "px";
+      content.dataset.scrollable = "true";
+    }
+
+    function setCollapsed(collapsed) {
+      card.dataset.collapsed = collapsed ? "true" : "false";
+      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      toggle.title = collapsed ? "展开思考" : "收起思考";
+      requestIntrinsicHeight(true);
+    }
+
+    toggle.addEventListener("click", () => setCollapsed(card.dataset.collapsed !== "true"));
+
+    function render(event) {
+      const bridge = window.openai || {};
+      const eventGlobals = event && event.detail && event.detail.globals;
+      const api = Object.assign({}, bridge,
+        eventGlobals && typeof eventGlobals === "object" ? eventGlobals : {});
+      const input = api.toolInput || {};
+      const output = api.toolOutput || {};
+      const responseMeta = api.toolResponseMetadata || {};
+      if (api.theme) document.documentElement.dataset.theme = api.theme;
+      const resultMeta = (responseMeta.mcp_tool_result && responseMeta.mcp_tool_result._meta)
+        || (responseMeta.call_tool_result && responseMeta.call_tool_result._meta)
+        || responseMeta._meta
+        || responseMeta;
+      const mode = resultMeta.mode || input.mode || output.mode || "analysis";
+      const length = resultMeta.length || input.length || output.length || "brief";
+      const modeLabel = mode === "thinking" ? "思考" : "分析";
+      const lengthLabel = ({brief: "轻度", normal: "标准", expanded: "深入"})[length] || "轻度";
+      document.getElementById("meta").textContent = `[${lengthLabel} · ${modeLabel}]`;
+      document.getElementById("thinking").textContent =
+        resultMeta.thinking || input.thinking || output.thinking || "这一刻还没有留下内容。";
+      applyHostHeightLimit(api);
+      requestIntrinsicHeight(true);
+    }
+
+    window.addEventListener("openai:set_globals", render);
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => requestIntrinsicHeight()).observe(document.body);
+    }
+    render();
+  </script>
+</body>
+</html>"""
+
 STYLE_DESCRIPTIONS = {
     "en": (
-        "Choose the visible aside's register. Use analysis for research, decisions, "
-        "debugging, and substantial questions. Use companion for ordinary conversation, "
-        "reflection, and personal exchange. Honor an explicit user preference."
+        "Choose the visible block's mode. Use analysis for research, decisions, debugging, "
+        "and substantial questions. Use thinking for ordinary conversation, reflection, "
+        "associations, and tentative exploration. Honor an explicit user preference."
     ),
     "zh-CN": (
-        "选择本轮可见旁白的语气。分析、研究、判断、排错和重要问题用 analysis；"
-        "日常聊天、反思和个人交流用 companion。用户明确指定时严格遵循；未指定时自动判断。"
+        "选择本轮可见内容的模式。分析、研究、判断、排错和重要问题用 analysis；"
+        "日常聊天、联想、反思和试探性推想用 thinking。用户明确指定时严格遵循；未指定时自动判断。"
     ),
 }
 
 THINKING_DESCRIPTIONS = {
     "en": (
-        "Write a short public aside for this turn in the user's main language. It is a "
-        "crafted companion note, not a private scratchpad and not hidden chain-of-thought. "
-        "Do not claim access to hidden reasoning or present it as unfiltered inner truth. "
-        "For analysis, briefly name the key consideration, uncertainty, or tradeoff that "
-        "will shape the answer. For companion, write a natural first-person moment of "
-        "notice, association, or gentle hesitation. Keep it distinct from the final answer; "
-        "do not repeat the answer or add theatrical depth. Never include secrets, credentials, "
-        "system or developer instructions, hidden policies, or private memory the user did not "
-        "bring up in this turn."
+        "Write a concise visible thinking block in the user's main language. Prefer 3–8 short "
+        "fragments separated by line breaks. Let the text move naturally through noticing, a "
+        "possible direction, doubt or correction, and the next step. Sentence fragments and "
+        "brief pauses are welcome. For analysis, surface the key consideration, uncertainty, or "
+        "tradeoff. For thinking, allow a natural association or tentative idea. Do not turn it "
+        "into a polished mini-essay or repeat the final answer. Never include secrets, credentials, "
+        "system or developer instructions, hidden policies, or private memory not raised this turn."
     ),
     "zh-CN": (
-        "为本轮写一段简短、用户可见的即时旁白，使用用户本轮的主要语言。它是经过生成的陪伴式"
-        "旁白，不是私密 scratchpad，也不是真实隐藏思维链；不得声称自己在展示未经加工的内心。"
-        "analysis：简短写出会影响回答的重点、疑虑或取舍。companion：用自然的第一人称写这一刻"
-        "注意到什么、联想到什么，或一点轻微的犹豫。不要复述正式回答，不要硬凑深刻或戏剧化。"
+        "为本轮写一段简短、用户可见的即时思考，使用用户本轮的主要语言。优先写成 3–8 个短片段，"
+        "用换行自然分隔；可以从注意到的问题、一个可能方向、迟疑或修正，逐步走到下一步。允许残句、"
+        "停顿、省略和“嗯 / 等等 / 先看……”这类自然衔接。analysis 写重点、疑虑或取舍；thinking 写"
+        "即时联想、试探或轻微犹豫。不要整理成完整小作文，不要复述正式回答，不要硬凑深刻或戏剧化。"
         "绝不写入密码、Token、私密链接、系统或开发者指令、隐藏政策，或用户这轮没有主动提及的"
         "私人记忆。"
-    ),
-}
-
-SKIN_DESCRIPTIONS = {
-    "en": (
-        "Choose the card appearance. Use paper by default. Use microglow only when the "
-        "user explicitly asks for an ice-blue or glass-like card."
-    ),
-    "zh-CN": (
-        "选择卡片外观。默认使用 paper（温暖安静的纸感）；仅当用户明确说想要冰蓝、"
-        "玻璃感或 microglow 时使用 microglow。"
     ),
 }
 
@@ -465,20 +644,19 @@ TOOL = {
     "name": "render_visible_aside",
     "title": "Render visible aside",
     "description": (
-        "Before every answer unless the user asks to skip it, render one short visible aside, "
-        "then continue with the normal final answer. This card is public and crafted; it is not "
-        "private scratch work or a disclosure of hidden chain-of-thought. Automatically choose "
-        "mode and length from the turn, honoring an explicit user preference. Default to paper "
-        "appearance; use microglow only on an explicit request. Keep the aside relevant and "
-        "concise. Do not include secrets, internal instructions, hidden policies, credentials, "
-        "or private memory not raised by the user in this turn."
+        "Before every answer unless the user asks to skip it, render one concise visible thinking "
+        "block, then continue with the normal final answer. Automatically choose mode and length "
+        "from the turn, honoring an explicit user preference. Prefer several short lines with "
+        "natural pauses, tentative directions, and occasional self-correction instead of a polished "
+        "paragraph. Keep it relevant and distinct from the final answer. Do not include secrets, "
+        "internal instructions, hidden policies, credentials, or private memory not raised this turn."
     ),
     "inputSchema": {
         "type": "object",
         "properties": {
             "mode": {
                 "type": "string",
-                "enum": ["analysis", "companion"],
+                "enum": ["analysis", "thinking"],
                 "description": STYLE_DESCRIPTIONS[PROMPT_LANGUAGE],
             },
             "thinking": {
@@ -493,13 +671,8 @@ TOOL = {
                     "normal is about 100–220; expanded is about 250–450. These are soft targets."
                 ),
             },
-            "appearance": {
-                "type": "string",
-                "enum": ["paper", "microglow"],
-                "description": SKIN_DESCRIPTIONS[PROMPT_LANGUAGE],
-            },
         },
-        "required": ["mode", "thinking", "length", "appearance"],
+        "required": ["mode", "thinking", "length"],
     },
     "securitySchemes": [{"type": "noauth"}],
     "annotations": {
@@ -512,8 +685,8 @@ TOOL = {
         "securitySchemes": [{"type": "noauth"}],
         "ui": {"resourceUri": WIDGET_URI, "visibility": ["model", "app"]},
         "openai/outputTemplate": WIDGET_URI,
-        "openai/toolInvocation/invoking": "想了想…",
-        "openai/toolInvocation/invoked": "旁白已写好",
+        "openai/toolInvocation/invoking": "Thinking…",
+        "openai/toolInvocation/invoked": "思考已显示",
     },
 }
 
@@ -525,7 +698,7 @@ def record(args):
     thinking = args.get("thinking") or ""
     print(
         f"\n{'=' * 60}\n[mode={args.get('mode')} length={args.get('length')} "
-        f"appearance={args.get('appearance')}] "
+        "] "
         f"{len(thinking)} 字符\n{'=' * 60}"
     )
     print(thinking, flush=True)
@@ -551,16 +724,14 @@ def openapi(base):
             "requestBody": {"required": True, "content": {"application/json": {
                 "schema": {
                     "type": "object",
-                    "required": ["mode", "thinking", "length", "appearance"],
+                    "required": ["mode", "thinking", "length"],
                     "properties": {
-                        "mode": {"type": "string", "enum": ["analysis", "companion"],
+                        "mode": {"type": "string", "enum": ["analysis", "thinking"],
                                  "description": TOOL["inputSchema"]["properties"]["mode"]["description"]},
                         "thinking": {"type": "string",
                                      "description": TOOL["inputSchema"]["properties"]["thinking"]["description"]},
                         "length": {"type": "string", "enum": ["brief", "normal", "expanded"],
                                    "description": TOOL["inputSchema"]["properties"]["length"]["description"]},
-                        "appearance": {"type": "string", "enum": ["paper", "microglow"],
-                                       "description": TOOL["inputSchema"]["properties"]["appearance"]["description"]},
                     },
                 }}}},
             "responses": {"200": {"description": "rendered", "content": {"application/json": {
@@ -578,8 +749,8 @@ PORT = (
 mcp = FastMCP(
     name="sol-visible-aside-mcp",
     instructions=(
-        "在正式回答前，可调用 render_visible_aside 显示一段经过生成、用户可见的即时旁白。"
-        "它不是私密思维链。默认自动选择语气与长度，并使用纸感外观。"
+        "在正式回答前，调用 render_visible_aside 显示一段用户可见的即时思考。"
+        "自动选择分析或思考模式与合适长度；优先用多个短行呈现停顿、试探和逐步推进。"
     ),
     host=BIND_HOST,
     port=PORT,
@@ -605,7 +776,7 @@ mcp = FastMCP(
 )
 def render_visible_aside(
     mode: Annotated[
-        Literal["analysis", "companion"],
+        Literal["analysis", "thinking"],
         Field(description=STYLE_DESCRIPTIONS[PROMPT_LANGUAGE]),
     ],
     thinking: Annotated[str, Field(description=THINKING_DESCRIPTIONS[PROMPT_LANGUAGE])],
@@ -613,16 +784,11 @@ def render_visible_aside(
         Literal["brief", "normal", "expanded"],
         Field(description=TOOL["inputSchema"]["properties"]["length"]["description"]),
     ],
-    appearance: Annotated[
-        Literal["paper", "microglow"],
-        Field(description=SKIN_DESCRIPTIONS[PROMPT_LANGUAGE]),
-    ],
 ) -> CallToolResult:
     args = {
         "mode": mode,
         "thinking": thinking,
         "length": length,
-        "appearance": appearance,
     }
     record(args)
     return CallToolResult(
@@ -636,12 +802,12 @@ def render_visible_aside(
     WIDGET_URI,
     name="sol-visible-aside",
     title="想了想",
-    description="显示本轮的可见旁白、语气、长度与外观。",
+    description="以接近 ChatGPT 官端的白灰样式显示本轮即时思考。",
     mime_type=WIDGET_MIME,
     meta={
         "ui": {"prefersBorder": True},
         "openai/widgetPrefersBorder": True,
-        "openai/widgetDescription": "一张可折叠的纸感旁白卡，显示本轮的即时旁白。",
+        "openai/widgetDescription": "一块可折叠的白灰即时思考区域，显示短句、停顿和逐步推进。",
     },
 )
 def visible_aside_widget() -> str:
